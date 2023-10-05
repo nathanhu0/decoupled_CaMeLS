@@ -1,0 +1,10 @@
+wandb/
+venv/
+outputs/
+slurm/
+data/
+__pycache__/
+slconf*
+*.pkl
+*.csv
+*.json

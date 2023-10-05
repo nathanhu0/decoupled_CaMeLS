@@ -1,0 +1,31 @@
+
+seed: 7
+base_model: distilgpt2
+base_model_state_dict: null
+
+weight_model_base: distilgpt2
+weight_model_freeze_base: false
+
+data_path: data/nyt/meta_train_split_with_matches_clean.csv
+max_length: 512
+val_size: 2160
+
+batch_size: 4
+num_epochs: 10
+
+reset_base_frequency: 8
+gradient_accumulation_steps: 8
+validation_frequency: 720
+
+outer_lr: 2.5e-5
+inner_lr: 1e-4
+gradiend_clip_threshold: 100
+
+notes: ''
+
+hydra:
+  job:
+    chdir: true
+  run:  
+    dir: outputs/metatrain/${now:%Y-%m-%d}_${now:%H:%M:%S}:$[notes}
+  
