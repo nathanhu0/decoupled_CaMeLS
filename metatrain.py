@@ -35,21 +35,21 @@ def compute_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = T
     
 def validate(base_model, weight_model, val_dataloader, inner_lr, base_state_dict, reset_base_frequency):
     losses = []
-    weights = []
+    weight_list = []
     base_model.load_state_dict(base_state_dict)
     for i, batch in enumerate(val_dataloader):
         batch = {k: v.to(base_model.device) for k, v in batch.items()}
         outer_loss, adapted_base_model, weights = compute_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = False)
         losses.append(outer_loss.item())
-        weights.append((weights[batch['adaptation_attn_mask']!=0]).cpu().numpy())
+        weight_list.append((weights[batch['adaptation_attn_mask']!=0]).detach().cpu().numpy())
         if (i+1) % reset_base_frequency == 0:
             base_model.load_state_dict(base_state_dict)
         else:
             base_model.load_state_dict(adapted_base_model.state_dict())
-    cat_weights = np.concatenate(weights)
+    cat_weights = np.concatenate(weight_list)
     return {'loss': sum(losses)/len(losses), 'mean_weight': cat_weights.mean(), 'std_weight': cat_weights.std(), 'max_weight': cat_weights.max(), 'min_weight': cat_weights.min()}
 
-def plot_sample_weights(weight_model, batch, tokenizer, save_dir = None, wandb = False):
+def plot_sample_weights(weight_model, batch, tokenizer, save_dir = None, log_to_wandb = False):
     with torch.no_grad():
         weights = weight_model(batch['adaptation_toks'], batch['adaptation_attn_mask'])
     sample_weights = []
@@ -58,10 +58,13 @@ def plot_sample_weights(weight_model, batch, tokenizer, save_dir = None, wandb =
         w = weights[i].detach().cpu().numpy()[:sum(batch['adaptation_attn_mask'][i])]
         sample_weights.append(create_colored_text(text, w))
     if save_dir is not None:
+        os.makedirs(save_dir, exist_ok = True)
         for i, image in enumerate(sample_weights):
             image.save(os.path.join(save_dir, f'weights_{i}.png'))
-    if wandb:
-        wandb.log({'sample_weights': [wandb.Image(image) for image in sample_weights]})
+    if log_to_wandb:
+        for i, image in enumerate(sample_weights):
+            
+            wandb.log({f'sample_weights_{i}': wandb.Image(image)})
 #%%
 @hydra.main(config_path='configs/metatrain', config_name='config')
 def run(args):
@@ -105,12 +108,13 @@ def run(args):
             epoch += 1
         batch = {k: v.to(device) for k, v in batch.items()}
         outer_loss, adapted_base_model, _ = compute_outer_loss(base_model, weight_model, batch, args.inner_lr)
-        accumulated_losses.append(outer_loss.item())
+        
         outer_loss = outer_loss / args.gradient_accumulation_steps
+        accumulated_losses.append(outer_loss.item())
         outer_loss.backward()
         #step the weight_model every gradient_accumulation_steps batches
         if (step+1) % args.gradient_accumulation_steps == 0:
-            grad_norm = torch.nn.utils.clip_grad_norm_(weight_model.parameters(), args.gradiend_clip_threshold)  
+            grad_norm = torch.nn.utils.clip_grad_norm_(weight_model.parameters(), args.gradient_clip_threshold)  
             optimizer.step()
             optimizer.zero_grad()
             wandb.log({'train_loss': sum(accumulated_losses), 'grad_norm': grad_norm})
@@ -124,7 +128,7 @@ def run(args):
         del adapted_base_model
         
         #validation
-        if (step+1) % (args.validation_frequency*args.grad_accumulation_steps) == 0:
+        if (step+1) % (args.validation_frequency*args.gradient_accumulation_steps) == 0:
             weight_model.eval()
             val_stats = validate(base_model, weight_model, val_dataloader, args.inner_lr, base_state_dict, args.reset_base_frequency)
             weight_model.train()
@@ -135,7 +139,7 @@ def run(args):
                 torch.save(weight_model.state_dict(), f'{wandb.run.dir}/best_model.pt')
                 print('Saved model')
             
-            plot_sample_weights(weight_model, sample_weight_batch, tokenizer, wandb = True)
+            plot_sample_weights(weight_model, sample_weight_batch, tokenizer, log_to_wandb = True)
         step += 1
 if __name__ == '__main__':
     run()
