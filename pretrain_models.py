@@ -39,7 +39,14 @@ def run(args):
     val_time_steps = [int(len(train_dataloader)*i/args.validations_per_epoch)-1 for i in range(args.validations_per_epoch)]
     
     best_val_loss = float('inf')
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    
+    if args.optimizer == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'adafactor':
+        optimizer = torch.optim.Adafactor(model.parameters(), lr=args.lr)
+    else:
+        raise ValueError(f'Invalid optimizer {args.optimizer}')
+    
     for epoch in range(args.num_epochs):
         print(f'Epoch {epoch}')
         for i, batch in tqdm(enumerate(train_dataloader)):
