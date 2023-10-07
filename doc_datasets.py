@@ -16,7 +16,7 @@ class NytDataset(Dataset):
     def __len__(self):
         return len(self.df)
     def __getitem__(self, idx):
-        text = self.df.iloc[idx]['merged_text']
+        text = self.df.iloc[idx]['text']
         tokenized = self.tokenizer(text, padding = 'max_length', max_length=self.max_length, truncation=True, return_tensors='pt')
         return tokenized
 
