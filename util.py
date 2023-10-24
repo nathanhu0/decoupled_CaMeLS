@@ -1,3 +1,4 @@
+#%%
 import os
 import getpass
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -8,6 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
 from typing import List
+from accelerate import load_checkpoint_and_dispatch, init_empty_weights
+
 
 if os.path.exists('/scr/scr-with-most-space'):
     CACHE_DIR = '/scr/scr-with-most-space/' + getpass.getuser()
@@ -16,10 +19,19 @@ elif os.path.exists('/scr-ssd'):
 else:
     CACHE_DIR = f'/scr/{getpass.getuser()}/cache'
     
-def get_base_model(base_model, base_model_state_dict = None):   
-    model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR)
+# def get_base_model(base_model, base_model_state_dict = None):   
+#     model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR, device_map = 'auto')
+#     if base_model_state_dict is not None:
+#         model.load_state_dict(torch.load(base_model_state_dict, map_location=model.device))
+#     return model
+
+def get_base_model(base_model, base_model_state_dict = None):
     if base_model_state_dict is not None:
-        model.load_state_dict(torch.load(base_model_state_dict, map_location=model.device))
+        with init_empty_weights():
+            model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR)
+        model = load_checkpoint_and_dispatch(model, base_model_state_dict, device_map='auto')
+    else:
+        model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR, device_map = 'auto')
     return model
 
 def set_seed(seed):
@@ -99,3 +111,4 @@ def create_colored_text(words: List[str], data: List[float], font_path='DejaVuSa
         x += word_width
     image = image.crop((0, 0, max_width, y + line_height)).resize((max_width, y + line_height))
     return image
+# %%

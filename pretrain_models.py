@@ -10,7 +10,6 @@ import torch
 from hydra.utils import to_absolute_path
 
 
-
 def validate_model(model, val_dataloader, args):
     model.eval()
     losses = []
@@ -22,7 +21,7 @@ def validate_model(model, val_dataloader, args):
             losses.append(loss.item())
     return sum(losses)/len(losses)
 #%%
-@hydra.main(config_path='configs/pretraining', config_name='config')
+@hydra.main(config_path='configs', config_name='pretraining_config')
 def run(args):
     model = get_base_model(args.base_model, args.base_model_state_dict).to(args.device)
     if args.gradient_checkpointing:
@@ -30,9 +29,14 @@ def run(args):
     
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, cache_dir = CACHE_DIR)
     tokenizer.pad_token_id = tokenizer.eos_token_id
-    train_dataset = NytDataset(to_absolute_path(args.train_data_path), tokenizer, args.max_length)
+    
+    if args.dataset.name == 'nyt':
+        train_dataset = NytDataset(to_absolute_path(args.dataset.pretrain_data_path), tokenizer, args.dataset.max_length)
+        val_dataset = NytDataset(to_absolute_path(args.dataset.pretrain_val_data_path), tokenizer, args.dataset.max_length)
+    else:
+        raise ValueError(f'Invalid dataset {args.dataset.name}')
+    
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    val_dataset = NytDataset(to_absolute_path(args.val_data_path), tokenizer, args.max_length)
     val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
     
     wandb.init(project='un-camels', entity='nathu', job_type='pretraining', config=args)
@@ -46,6 +50,7 @@ def run(args):
         optimizer = torch.optim.Adafactor(model.parameters(), lr=args.lr)
     else:
         raise ValueError(f'Invalid optimizer {args.optimizer}')
+    
     
     for epoch in range(args.num_epochs):
         print(f'Epoch {epoch}')
@@ -64,7 +69,7 @@ def run(args):
                 wandb.log({'val_loss': val_loss})
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    torch.save(model.state_dict(), f'{wandb.run.dir}/best_model.pt')
+                    torch.save(model.state_dict(), f'{hydra.run.dir}/best_model.pt')
                     print('Saved model')
                 model.train()
     
