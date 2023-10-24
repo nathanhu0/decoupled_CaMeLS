@@ -6,7 +6,10 @@ from util import CACHE_DIR
 
 class NytDataset(Dataset):
     def __init__(self, data_path, tokenizer, max_length=1024):
-        self.df = pd.read_json(data_path)
+        if '.csv' in data_path:
+            self.df = pd.read_csv(data_path)
+        elif '.json' in data_path:
+            self.df = pd.read_json(data_path)
         if isinstance(tokenizer, str):
             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, cache_dir = CACHE_DIR)
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
@@ -32,30 +35,42 @@ class PairedTextDataset(Dataset):
         raise NotImplementedError
     def get_paired_passage(self, idx):
         raise NotImplementedError
+    def get_future_passage(self, idx):
+        raise NotImplementedError
     def __len__(self):
         raise NotImplementedError
     def __getitem__(self, idx):
         adaptation_passage = self.get_adaptation_passage(idx)
         paired_passage = self.get_paired_passage(idx)
+        future_passage = self.get_future_passage(idx)
         adaptation_tokenized = self.tokenizer(adaptation_passage, padding = 'max_length', max_length=self.max_length, truncation=True, return_tensors='pt')
         paired_tokenized = self.tokenizer(paired_passage, padding = 'max_length', max_length=self.max_length, truncation=True, return_tensors='pt')
+        future_tokenized = self.tokenizer(future_passage, padding = 'max_length', max_length=self.max_length, truncation=True, return_tensors='pt')
         return {'adaptation_toks': adaptation_tokenized['input_ids'].squeeze(), 
                 'adaptation_attn_mask': adaptation_tokenized['attention_mask'].squeeze(), 
                 'paired_toks': paired_tokenized['input_ids'].squeeze(), 
-                'paired_attn_mask': paired_tokenized['attention_mask'].squeeze()}
+                'paired_attn_mask': paired_tokenized['attention_mask'].squeeze(), 
+                'future_toks': future_tokenized['input_ids'].squeeze(),
+                'future_attn_mask': future_tokenized['attention_mask'].squeeze()}
     
 class PairedNytDataset(PairedTextDataset):
-    def __init__(self, data_path, tokenizer, max_length=1024):
+    def __init__(self, data_path, tokenizer, max_length=1024, ):
         if '.csv' in data_path:
             self.df = pd.read_csv(data_path)
         elif '.json' in data_path:
             self.df = pd.read_json(data_path)
+        self.df.dropna(inplace=True, subset=['match_text'])
+        self.df['date'] = pd.to_datetime(self.df['date'])
         super().__init__(tokenizer, max_length)
         
     def get_adaptation_passage(self, idx):
         return self.df.iloc[idx]['text']
     def get_paired_passage(self, idx):
         return self.df.iloc[idx]['match_text']
+    def get_future_passage(self, idx):
+        date = self.df.iloc[idx]['date']
+        next_date = self.df[self.df['date'] > date]['date'].min()
+        return self.df[self.df['date'] == next_date]['text'].sample().item()
     def __len__(self):
         return len(self.df)
 # %%
