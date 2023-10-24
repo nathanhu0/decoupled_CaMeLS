@@ -8,3 +8,4 @@ slconf*
 *.pkl
 *.csv
 *.json
+pretrianed_models/

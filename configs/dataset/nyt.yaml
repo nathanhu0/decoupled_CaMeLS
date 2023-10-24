@@ -1,0 +1,6 @@
+name: nyt
+pretrain_data_path: data/nyt/pretrain_split.csv
+pretrain_val_data_path: data/nyt/pretrain_val_split.csv
+train_data_path: data/nyt/paired_meta_train.csv
+val_data_path: data/nyt/paired_meta_val.csv
+max_length: 1024

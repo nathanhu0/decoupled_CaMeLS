@@ -1,20 +1,24 @@
+defaults:
+  - dataset: nyt
+
+
 base_model: ??
 base_model_state_dict: null
 lr: 0.0001
 batch_size: 8
 gradient_accumulation_steps: 1
-validations_per_epoch: 5
+validations_per_epoch: 10
 num_epochs: 20
+
 device: cuda
-train_data_path: data/nyt/pretrain_split.csv
-val_data_path: data/nyt/pretrain_val_split.csv
-max_length: 1024
 gradient_checkpointing: False
 optimizer: adam
+
+
 
 hydra:
   job:
     chdir: true
   run:  
-    dir: outputs/pretraining/${base_model}/${now:%Y-%m-%d}_${now:%H:%M:%S}
+    dir: outputs/pretraining/${dataset.name}/${base_model}/${now:%Y-%m-%d}_${now:%H:%M:%S}
   
