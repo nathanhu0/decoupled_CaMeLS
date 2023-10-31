@@ -1,0 +1,7 @@
+name: archivalqa
+qa_pretrain_data_path: data/archivalqa/qa_lt.csv
+qa_pretrain_val_data_path: data/archivalqa/qa_lt_val.csv
+train_data_path: data/archivalqa/train.csv
+val_data_path: data/archivalqa/val.csv
+test_data_path: data/archivalqa/test.csv
+max_length: 1024

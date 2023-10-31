@@ -19,20 +19,21 @@ elif os.path.exists('/scr-ssd'):
 else:
     CACHE_DIR = f'/scr/{getpass.getuser()}/cache'
     
-# def get_base_model(base_model, base_model_state_dict = None):   
-#     model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR, device_map = 'auto')
-#     if base_model_state_dict is not None:
-#         model.load_state_dict(torch.load(base_model_state_dict, map_location=model.device))
-#     return model
-
-def get_base_model(base_model, base_model_state_dict = None):
+def get_base_model(base_model, base_model_state_dict = None):   
+    model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR, device_map = 'auto')
     if base_model_state_dict is not None:
-        with init_empty_weights():
-            model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR)
-        model = load_checkpoint_and_dispatch(model, base_model_state_dict, device_map='auto')
-    else:
-        model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR, device_map = 'auto')
+        print('Loading base model state dict...')
+        model.load_state_dict(torch.load(base_model_state_dict, map_location=model.device))
     return model
+
+# def get_base_model(base_model, base_model_state_dict = None):
+#     if base_model_state_dict is not None:
+#         with init_empty_weights():
+#             model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR)
+#         model = load_checkpoint_and_dispatch(model, base_model_state_dict, device_map='auto')
+#     else:
+#         model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR, device_map = 'auto')
+#     return model
 
 def set_seed(seed):
     random.seed(seed)
@@ -111,4 +112,40 @@ def create_colored_text(words: List[str], data: List[float], font_path='DejaVuSa
         x += word_width
     image = image.crop((0, 0, max_width, y + line_height)).resize((max_width, y + line_height))
     return image
+
+
+# %%
+
+def shuffle_groups(df, group_col):
+    """
+    Shuffles the order of groups in a Pandas DataFrame without shuffling the order of items within each group.
+
+    Parameters:
+    - df: the input DataFrame
+    - group_col: the name of the column containing the groups to be shuffled
+
+    Returns:
+    - a shuffled copy of the input DataFrame
+    """
+    # Get a list of unique groups
+    groups = df[group_col].unique()
+
+    # Shuffle the list of groups
+    np.random.shuffle(groups)
+
+    # Define a sorting key that sorts by the shuffled order of groups
+    def sort_key(row):
+        return np.argwhere(groups == row[group_col])[0][0]
+
+    df['temp'] = df.apply(sort_key, axis=1)
+    shuffled_df = df.sort_values('temp', kind='stable').drop('temp', axis=1).reset_index(drop=True)
+    return shuffled_df
+
+#given a pd dataframe, return a head of the dataframe such that column column has k unique values
+def return_k_unique(df, k, column): 
+    if k >= len(df[column].unique()):
+        return df
+    else:
+        values_to_keep = df[column].unique()[:k]
+        return df[df.apply(lambda x: x[column] in values_to_keep, axis=1)]
 # %%

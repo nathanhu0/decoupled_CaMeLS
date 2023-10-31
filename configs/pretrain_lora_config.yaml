@@ -1,0 +1,24 @@
+defaults:
+  - dataset: archivalqa
+
+base_model: ??
+base_model_state_dict: null
+
+r: 4 #rank for LORA
+param_re: "transformer.h.(\\d+).attn.(c_attn|c_proj).weight"
+
+lr: 0.0001
+batch_size: 8
+gradient_accumulation_steps: 1
+validations_per_epoch: 10
+num_epochs: 20
+
+device: cuda
+optimizer: adam
+
+hydra:
+  job:
+    chdir: true
+  run:  
+    dir: outputs/pretraining_lora/${dataset.name}/${base_model}_r:${r}/${now:%Y-%m-%d}_${now:%H:%M:%S}
+  
