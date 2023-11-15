@@ -81,7 +81,7 @@ def run(args):
                 wandb.log({'val_loss': val_loss})
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    torch.save(model.state_dict(), f'{hydra.run.dir}/best_model.pt')
+                    torch.save(model.state_dict(), f'./best_model.pt')
                     print('Saved model')
                 model.train()
     
