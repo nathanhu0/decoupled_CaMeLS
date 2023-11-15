@@ -5,3 +5,4 @@ train_data_path: data/archivalqa/train.csv
 val_data_path: data/archivalqa/val.csv
 test_data_path: data/archivalqa/test.csv
 max_length: 1024
+full_passage: false #if true, use the full passage for the adaptation text, otherwise use the paragraph

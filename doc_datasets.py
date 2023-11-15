@@ -29,24 +29,6 @@ def tokenize_qa(question, answer, tokenizer, max_length=1024):
     qa_attention = torch.nn.functional.pad(qa_attention, (0, n_pad), value = 0)
     qa_target_ids = torch.nn.functional.pad(qa_target_ids, (0, n_pad), value = -100)
     return qa_ids, qa_attention, qa_target_ids
-class NytDataset(Dataset):
-    def __init__(self, data_path, tokenizer, max_length=1024):
-        if '.csv' in data_path:
-            self.df = pd.read_csv(data_path)
-        elif '.json' in data_path:
-            self.df = pd.read_json(data_path)
-        if isinstance(tokenizer, str):
-            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, cache_dir = CACHE_DIR)
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-        else:
-            self.tokenizer = tokenizer
-        self.max_length = max_length
-    def __len__(self):
-        return len(self.df)
-    def __getitem__(self, idx):
-        text = self.df.iloc[idx]['text']
-        tokenized = self.tokenizer(text, padding = 'max_length', max_length=self.max_length, truncation=True, return_tensors='pt')
-        return tokenized
 
 class PairedTextDataset(Dataset):
     def __init__(self, tokenizer, max_length=1024):
@@ -79,7 +61,25 @@ class PairedTextDataset(Dataset):
                 return_dic[text_name + '_labels'] = qa_target_ids.squeeze()
                 
         return return_dic
-     
+
+class NytDataset(PairedTextDataset):
+    def __init__(self, data_path, tokenizer, max_length=1024):
+        if '.csv' in data_path:
+            self.df = pd.read_csv(data_path)
+        elif '.json' in data_path:
+            self.df = pd.read_json(data_path)
+        if isinstance(tokenizer, str):
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, cache_dir = CACHE_DIR)
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        else:
+            self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.text_fn_dic = {'adaptation': self.get_adaptation_passage}
+    def __len__(self):
+        return len(self.df)
+    def get_adaptation_passage(self, idx):
+        return self.df.iloc[idx]['text']
+
 class PairedNytDataset(PairedTextDataset):
     def __init__(self, data_path, tokenizer, max_length=1024, ):
         if '.csv' in data_path:
