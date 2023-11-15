@@ -4,8 +4,9 @@ defaults:
 base_model: ??
 base_model_state_dict: null
 
+debug: true
+
 r: 4 #rank for LORA
-param_re: "transformer.h.(\\d+).attn.(c_attn|c_proj).weight"
 
 lr: 0.0001
 batch_size: 8
