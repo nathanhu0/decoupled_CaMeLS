@@ -17,7 +17,7 @@ def validate_model(model, val_dataloader, device):
     with torch.no_grad():
         for batch in tqdm(val_dataloader):
             batch = {k: v.to(device) for k, v in batch.items()}
-            outputs = model(model(input_ids=batch['adaptation_toks'], attention_mask=batch['adaptation_attn_mask'], labels=batch['adaptation_labels']))
+            outputs = model(input_ids=batch['adaptation_toks'], attention_mask=batch['adaptation_attn_mask'], labels=batch['adaptation_labels'])
             loss = outputs.loss
             losses.append(loss.item())
     return sum(losses)/len(losses)
