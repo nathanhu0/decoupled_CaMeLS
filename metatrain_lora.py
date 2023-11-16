@@ -159,8 +159,8 @@ def run(args):
             
         outer_loss = outer_loss / args.gradient_accumulation_steps
         outer_loss.backward()
-        with torch.no_grad:
-            lora_weight_hash = get_lora_parameters(weight_model)[0].mean().item()
+        with torch.no_grad():
+            lora_weight_hash = get_lora_parameters(base_model)[0].abs().sum().item()
         wandb.log({'lora_weight_hash': lora_weight_hash}, commit=False)
         
         if args.debug: 
