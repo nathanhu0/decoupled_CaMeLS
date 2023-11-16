@@ -12,7 +12,7 @@ import higher
 import numpy as np
 from lora import add_lora, set_lora_state, load_lora, get_lora_parameters
 
-def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = True, debug = False, inner_lora = False):
+def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = True, debug = False, inner_lora = False, learn_inner_lr = False):
     #inner_lora: if true, we use the lora model to compute the inner loss. If false, we use the base model
     
     if debug: 
@@ -27,7 +27,13 @@ def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = Tru
     set_lora_state(base_model, inner_lora)
     
     inner_losses = []
-    with higher.innerloop_ctx(base_model, optimizer, copy_initial_weights=True, track_higher_grads = outer_grad) as (f_base_lm, diffopt):
+    if learn_inner_lr:
+        assert isinstance(inner_lr, torch.Tensor)
+        overrides = {'lr': inner_lr}
+    else:
+        overrides = None
+        
+    with higher.innerloop_ctx(base_model, optimizer, copy_initial_weights=True, track_higher_grads = outer_grad, override=overrides) as (f_base_lm, diffopt):
         for i in range(len(batch['adaptation_toks'])):
             
             loss = weighted_lm_loss(f_base_lm, batch['adaptation_toks'][i:i+1], batch['adaptation_toks'][i:i+1], batch['adaptation_attn_mask'][i:i+1], weights[i:i+1])
@@ -43,10 +49,10 @@ def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = Tru
             
     return f_base_lm, weights, sum(inner_losses)/len(inner_losses)
 
-def compute_lora_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = True, inner_lora = False, debug = False):
+def compute_lora_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = True,  debug = False, **inner_kwargs):
     #adaptation
     
-    adapted_base_model, weights, inner_loss = adapt_base_model(base_model, weight_model, batch, inner_lr, inner_lora = inner_lora, outer_grad = outer_grad, debug = debug)
+    adapted_base_model, weights, inner_loss = adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = outer_grad, debug = debug, **inner_kwargs)
     if debug: 
         print(' Post inner loop: ')
         debug_memory()
@@ -104,7 +110,9 @@ def run(args):
     
     weight_model = CaMeLS(args.weight_model_base, args.weight_model_freeze_base, nl=args.weight_model_nl).to(device)
     
-    optimizer = torch.optim.Adam(list(weight_model.parameters()), lr=args.outer_lr)
+    inner_lr = torch.tensor([args.inner_lr], requires_grad = args.learn_inner_lr, device = device)
+    
+    optimizer = torch.optim.Adam(list(weight_model.parameters()) + [inner_lr], lr=args.outer_lr)
     
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, cache_dir = CACHE_DIR)
     tokenizer.pad_token = tokenizer.eos_token
@@ -148,7 +156,7 @@ def run(args):
             epoch += 1
         batch = {k: v.to(device) for k, v in batch.items()}
         
-        outer_loss, inner_loss, adapted_base_model, weights = compute_lora_outer_loss(base_model, weight_model, batch, args.inner_lr, outer_grad = True, inner_lora = args.inner_lora, debug = args.debug)
+        outer_loss, inner_loss, adapted_base_model, weights = compute_lora_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = True, inner_lora = args.inner_lora, debug = args.debug, learn_inner_lr = args.learn_inner_lr)
         
         accumulated_outer_losses.append(outer_loss.item())
         accumulated_inner_losses.append(inner_loss)
@@ -173,7 +181,8 @@ def run(args):
             optimizer.zero_grad()
             wandb.log({'train':{'outer_loss': np.mean(accumulated_outer_losses),
                         'inner_loss': np.mean(accumulated_inner_losses),
-                        'grad_norm': grad_norm}})
+                        'grad_norm': grad_norm},
+                        'inner_lr': inner_lr.item()})
             accumulated_outer_losses = []
             accumulated_inner_losses = []
             
@@ -194,7 +203,7 @@ def run(args):
         #validation
         if (step+1) % (args.validation_frequency*args.gradient_accumulation_steps) == 0:
             weight_model.eval()
-            val_stats = validate(base_model, weight_model, val_dataloader, args.inner_lr, base_state_dict, args.reset_base_frequency, inner_lora=args.inner_lora)
+            val_stats = validate(base_model, weight_model, val_dataloader, inner_lr, base_state_dict, args.reset_base_frequency, inner_lora=args.inner_lora)
             weight_model.train()
             val_loss = val_stats['outer_loss']
             wandb.log({'val': val_stats})

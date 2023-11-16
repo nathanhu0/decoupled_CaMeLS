@@ -3,6 +3,8 @@ import os
 import getpass
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
+import gc
+import psutil
 import torch.nn.functional as F
 import random
 import numpy as np
@@ -11,13 +13,15 @@ from PIL import Image, ImageDraw, ImageFont
 from typing import List
 from accelerate import load_checkpoint_and_dispatch, init_empty_weights
 
-
-if os.path.exists('/scr/scr-with-most-space'):
-    CACHE_DIR = '/scr/scr-with-most-space/' + getpass.getuser()
-elif os.path.exists('/scr-ssd'):
-    CACHE_DIR = '/scr-ssd/' + getpass.getuser()
-else:
-    CACHE_DIR = f'/scr/{getpass.getuser()}/cache'
+for cache_dir_loc in ['/scr/scr-with-most-space', '/scr-ssd', '/scr']:
+    if os.path.exists(cache_dir_loc):
+        CACHE_DIR = cache_dir_loc + '/' + getpass.getuser()
+        try:
+            os.makedirs(CACHE_DIR, exist_ok = True)
+            break
+        except:
+            pass
+print(f'Using cache dir {CACHE_DIR}')
     
 def get_base_model(base_model, base_model_state_dict = None):   
     model = AutoModelForCausalLM.from_pretrained(base_model, cache_dir = CACHE_DIR, device_map = 'auto')
@@ -50,10 +54,10 @@ def weighted_lm_loss(model, input_ids, target_ids, attention_mask, weights):
     batch_size = len(input_ids)
     #reshape logits and labels to be (batch_size*(seq_len-1), vocab_size)
     #we drop the last logit as there are no labels, and the first label as there are no logits
-    reshaped_logits = outputs.logits[:, :-1, :].reshape(-1, outputs.logits.shape[-1])
-    reshaped_labels = target_ids[:, 1:].reshape(-1)
-    l = F.cross_entropy(reshaped_logits, reshaped_labels, ignore_index = -100, reduction = 'none')
-    return (l.reshape(batch_size, -1)*weights[:, 1:]*attention_mask[:, 1:]).mean()
+    reshaped_logits = outputs.logits[:, :-1, :].reshape(-1, outputs.logits.shape[-1]) #shape (batch_size*(seq_len-1), vocab_size)
+    reshaped_labels = target_ids[:, 1:].reshape(-1) #shape (batch_size*(seq_len-1))
+    l = F.cross_entropy(reshaped_logits, reshaped_labels, ignore_index = -100, reduction = 'none') #shape (batch_size*(seq_len-1))
+    return (l.reshape(batch_size, -1)*weights[:, 1:]*attention_mask[:, 1:]).sum()/attention_mask[:, 1:].sum()
 
 
 def create_colored_text(words: List[str], data: List[float], font_path='DejaVuSansMono.ttf', pos_cmap=None, neg_cmap=None, max_intensity=.8) -> Image:
@@ -149,3 +153,24 @@ def return_k_unique(df, k, column):
         values_to_keep = df[column].unique()[:k]
         return df[df.apply(lambda x: x[column] in values_to_keep, axis=1)]
 # %%
+
+def debug_memory():
+    # For CPU RAM
+    cpu_ram_available_gb = psutil.virtual_memory().available / (1024 ** 3)
+    cpu_ram_total_gb = psutil.virtual_memory().total / (1024 ** 3)
+    print(f'CPU RAM free: {cpu_ram_available_gb:.2f} GB out of {cpu_ram_total_gb:.2f} GB')
+
+    if torch.cuda.is_available():
+        gpu_ram_allocated_gb = torch.cuda.memory_allocated() / (1024 ** 3)
+        gpu_ram_total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        print(f'GPU RAM actively used: {gpu_ram_allocated_gb:.2f} GB out of {gpu_ram_total_gb:.2f} GB')
+    else:
+        print('No GPU available.')
+    param_count = 0
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                param_count += 1
+        except:
+            pass
+    print('Number of tensors: ', param_count)
