@@ -8,7 +8,7 @@ import sys
 sys.path.append('../')
 from util import CACHE_DIR
 import re
-
+from tqdm import tqdm
 #wrapper class for linear layer
 class LoraLinear(nn.Module):
     def __init__(self, original_linear, r):
@@ -57,8 +57,18 @@ def freeze_non_lora(model, lora_gradient = True):
         param.requires_grad = False
     for param in get_lora_parameters(model):
         param.requires_grad = lora_gradient
-  
-    
+
+def save_lora(model, path):
+    torch.save(get_lora_parameters(model), path)
+
+def load_lora(model, path):
+    print('Loading LORA parameters from', path)
+    #assumes add_lora(model, r) has already been called
+    loaded_lora_params = torch.load(path)
+    for original, loaded in tqdm(zip(get_lora_parameters(model), loaded_lora_params)):
+        assert original.shape == loaded.shape
+        original.data = loaded.data
+        
     
 
 #%%
