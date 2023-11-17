@@ -1,12 +1,15 @@
 defaults:
   - dataset: nyt
 
+debug: false
+
 seed: 7
 base_model: distilgpt2
 base_model_state_dict: /iris/u/nathu/un_camels/pretrained_models/nyt/distilgpt2.pt
 
 weight_model_base: distilgpt2
 weight_model_freeze_base: false
+weight_model_nl: softplus
 
 future_loss_weight: 0.0 #between 0 and 1, how much of the loss to be random next day doc
 

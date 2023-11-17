@@ -1,6 +1,8 @@
 defaults:
   - dataset: archivalqa
 
+seed: 7
+
 base_model: ??
 base_model_state_dict: null
 

@@ -30,6 +30,8 @@ def tokenize_qa(question, answer, tokenizer, max_length=1024):
     qa_target_ids = torch.nn.functional.pad(qa_target_ids, (0, n_pad), value = -100)
     return qa_ids, qa_attention, qa_target_ids
 
+
+
 class PairedTextDataset(Dataset):
     def __init__(self, tokenizer, max_length=1024):
         if isinstance(tokenizer, str):
@@ -40,6 +42,26 @@ class PairedTextDataset(Dataset):
         self.max_length = max_length
         self.text_fn_dic = {}
    
+   
+    #collate_fn for PairedTextDataset, note logic is depend on the naming convention of the keys in the batch
+    @staticmethod
+    def collate_fn(inputs):
+        outputs = {}
+        for k, v in inputs[0].items():
+            if isinstance(v, torch.Tensor):
+                outputs[k] = torch.stack([inp[k] for inp in inputs])
+            else:
+                outputs[k] = [inp[k] for inp in inputs]
+        tensor_groups = [k.split('_')[0] for k in outputs.keys() if k.split('_')[1] =='toks']
+        for tensor_group in tensor_groups:
+            non_zero_positions = (outputs[tensor_group + '_attn_mask'].sum(dim=0) > 0).nonzero().squeeze()
+            start = non_zero_positions.min().item()
+            end = non_zero_positions.max().item() + 1
+            for suffix in ['toks', 'attn_mask', 'labels']:
+                if tensor_group + '_' + suffix in outputs:
+                    outputs[tensor_group + '_' + suffix] = outputs[tensor_group + '_' + suffix][:, start:end]
+        return outputs
+    
     def __len__(self):
         raise NotImplementedError
     def __getitem__(self, idx):
@@ -55,11 +77,14 @@ class PairedTextDataset(Dataset):
                 return_dic[text_name + '_labels'][return_dic[text_name + '_attn_mask'] == 0] = -100
             else: #in the case that text is a tuple, we assume it is a question answer pair
                 question, answer = text
-                qa_ids, qa_attention, qa_target_ids = tokenize_qa(question, answer, self.tokenizer, self.max_length)
+                qa_ids, qa_attention, qa_target_ids = tokenize_qa(question, answer + self.tokenizer.eos_token, self.tokenizer, self.max_length)
                 return_dic[text_name + '_toks'] = qa_ids.squeeze()
                 return_dic[text_name + '_attn_mask'] = qa_attention.squeeze()
                 return_dic[text_name + '_labels'] = qa_target_ids.squeeze()
-                
+                tokenized_question = self.tokenizer(question, padding = 'max_length', return_tensors='pt')
+                return_dic[text_name + 'gen_toks'] = tokenized_question['input_ids'].squeeze()
+                return_dic[text_name + 'gen_attn_mask'] = tokenized_question['attention_mask'].squeeze()
+                return_dic[text_name + '_answer_text'] = answer
         return return_dic
 
 class NytDataset(PairedTextDataset):
@@ -131,7 +156,7 @@ class ArchivalQADataset(PairedTextDataset):
         if answer[0].islower():
             answer = answer[0].upper() + answer[1:]
         question = row['question'].strip() 
-        answer = ' ' + answer.strip() + self.tokenizer.eos_token
+        answer = ' ' + answer.strip()
         return question, answer
     
     def get_text(self, idx):
@@ -152,11 +177,16 @@ class ArchivalQADataset(PairedTextDataset):
         #add qa
         return return_dic
         
-        
+#%%
+
 # %%
 # tokenizer = AutoTokenizer.from_pretrained('gpt2', cache_dir = CACHE_DIR)
 # tokenizer.pad_token_id = tokenizer.eos_token_id
 # train_dataset = NYT_dataset('/iris/u/nathu/un_camels/data/nyt/pretrain_split.csv', tokenizer, 1024)
 # train_dataloader = DataLoader(train_dataset, batch_size=2, shuffle=True)
 # next(iter(train_dataloader))
+# %%
+dataset=ArchivalQADataset('/iris/u/nathu/un_camels/data/archivalqa/dev50.csv', tokenizer='gpt2')
+dataloader = DataLoader(dataset, batch_size=2, shuffle=True, collate_fn=PairedTextDataset.collate_fn)
+next(iter(dataloader))
 # %%

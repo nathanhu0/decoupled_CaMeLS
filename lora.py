@@ -51,6 +51,13 @@ def get_lora_parameters(model):
             parameter_list.append(module.A)
             parameter_list.append(module.B)
     return parameter_list
+
+def get_non_lora_parameters(model):
+    all_params = set(model.parameters())
+    lora_params = set(get_lora_parameters(model))
+    return list(all_params - lora_params)
+
+
 #set all non-lora params to not require gradient. Lora param's require_grad is set to lora_gradient 
 def freeze_non_lora(model, lora_gradient = True):
     for param in model.parameters():
