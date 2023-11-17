@@ -147,13 +147,17 @@ def run(args):
     
     if args.dataset.name == 'archivalqa':
         if args.data_split == 'test':
-            adaptation_dataset = ArchivalQADataset(to_absolute_path(args.dataset.test_data_path), tokenizer = tokenizer, max_length = args.dataset.max_length, downsample_to=args.downsample_to)
+            evaluation_dataset = ArchivalQADataset(to_absolute_path(args.dataset.test_data_path), tokenizer = tokenizer, max_length = args.dataset.max_length, downsample_to=args.downsample_to)
+            #same dataset but remove duplicate articles
+            adaptation_dataset = evaluation_dataset.get_deduplicated_dataset()
         elif args.data_split == 'val':
-            adaptation_dataset = ArchivalQADataset(to_absolute_path(args.dataset.val_data_path), tokenizer = tokenizer, max_length = args.dataset.max_length, downsample_to=args.downsample_to)
+            evaluation_dataset = ArchivalQADataset(to_absolute_path(args.dataset.val_data_path), tokenizer = tokenizer, max_length = args.dataset.max_length, downsample_to=args.downsample_to)
+            adaptation_dataset = evaluation_dataset.get_deduplicated_dataset()
     else:
         raise NotImplementedError
     
     adaptation_dataloader = torch.utils.data.DataLoader(adaptation_dataset, batch_size=1, shuffle=False, collate_fn=adaptation_dataset.collate_fn)
+    evaluation_dataloader = torch.utils.data.DataLoader(evaluation_dataset, batch_size=1, shuffle=False, collate_fn=evaluation_dataset.collate_fn)
     
     wandb.init(project='un-camels', entity='nathu', job_type='evaluation', config=args)
     if args.loss_weighting != 'init':
@@ -165,8 +169,8 @@ def run(args):
     print('evaluating final model...')
     base_model.eval()
     set_lora_state(base_model, True)
-    qa_nll = evaluate_qa_nll(base_model, adaptation_dataloader)
-    max_f1, avg_f1 = evaluate_qa_f1(base_model, tokenizer, adaptation_dataloader, './final_generation_outputs.csv', k_generations=args.k_generations, max_answer_len=args.max_answer_len, **generation_defaults)
+    qa_nll = evaluate_qa_nll(base_model, evaluation_dataset)
+    max_f1, avg_f1 = evaluate_qa_f1(base_model, tokenizer, evaluation_dataset, './final_generation_outputs.csv', k_generations=args.k_generations, max_answer_len=args.max_answer_len, **generation_defaults)
     wandb.log({'qa_nll': qa_nll, 'max_f1': max_f1, 'avg_f1': avg_f1})
     print(f'QA NLL: {qa_nll}, Max F1: {max_f1}, Avg F1: {avg_f1}')
     with open('./final_qa_metrics.json', 'w') as f:
