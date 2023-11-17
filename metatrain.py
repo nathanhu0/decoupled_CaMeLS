@@ -1,7 +1,7 @@
 #%%
-from camels import CaMeLS
+from camels import CaMeLS, plot_sample_weights
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from util import CACHE_DIR, set_seed, get_base_model, weighted_lm_loss, create_colored_text
+from util import CACHE_DIR, set_seed, get_base_model, weighted_lm_loss, debug_memory
 import torch
 import hydra
 from hydra.utils import to_absolute_path
@@ -11,38 +11,51 @@ import os
 import higher 
 import numpy as np
 
-def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = True):
+def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = True, debug = False):
+    if debug: 
+        print(' Pre inner loop: ')
+        debug_memory()
     optimizer = torch.optim.SGD(base_model.parameters(), lr=inner_lr)
     weights = weight_model(batch['adaptation_toks'], batch['adaptation_attn_mask'])
-    
+    if debug: 
+        print(' Post Weight model fwd pass: ')
+        debug_memory()
     with higher.innerloop_ctx(base_model, optimizer, copy_initial_weights=True, track_higher_grads = outer_grad) as (f_base_lm, diffopt):
         for i in range(len(batch['adaptation_toks'])):
+            
             loss = weighted_lm_loss(f_base_lm, batch['adaptation_toks'][i:i+1], batch['adaptation_toks'][i:i+1], batch['adaptation_attn_mask'][i:i+1], weights[i:i+1])
+            if debug: 
+                print(f' {i}th inner loss compute: ')
+                debug_memory()
             diffopt.step(loss)
+            if debug: 
+                print(f' {i}th inner loss backwards: ')
+                debug_memory()
+            
     return f_base_lm, weights
 
-def compute_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = True):
-    paired_labels = batch['paired_toks'].clone()
-    paired_labels[batch['paired_attn_mask']!=1] = -100
-    future_labels = batch['future_toks'].clone()
-    future_labels[batch['future_attn_mask']!=1] = -100
+def compute_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = True, debug=False):
     #adaptation
     adapted_base_model, weights = adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = outer_grad)
-    if outer_grad:
-        paired_outer_loss = adapted_base_model(input_ids = batch['paired_toks'], attention_mask = batch['paired_attn_mask'], labels = paired_labels)['loss']
-        future_outer_loss = adapted_base_model(input_ids = batch['future_toks'], attention_mask = batch['future_attn_mask'], labels = future_labels)['loss']
-    else:
-        with torch.no_grad():
-            paired_outer_loss = adapted_base_model(input_ids = batch['paired_toks'], attention_mask = batch['paired_attn_mask'], labels = paired_labels)['loss']
-            future_outer_loss = adapted_base_model(input_ids = batch['future_toks'], attention_mask = batch['future_attn_mask'], labels = future_labels)['loss']
+    if debug: 
+        print(' Post inner loop: ')
+        debug_memory()
+    with torch.set_grad_enabled(outer_grad):
+        paired_outer_loss = adapted_base_model(input_ids = batch['paired_toks'], attention_mask = batch['paired_attn_mask'], labels = batch['paired_labels'])['loss']
+        future_outer_loss = adapted_base_model(input_ids = batch['future_toks'], attention_mask = batch['future_attn_mask'], labels = batch['future_labels'])['loss']
+    if debug: 
+        print(' Post Outer Loss: ')
+        debug_memory()
     return paired_outer_loss, future_outer_loss, adapted_base_model, weights
     
-def validate(base_model, weight_model, val_dataloader, inner_lr, base_state_dict, reset_base_frequency):
+def validate(base_model, weight_model, val_dataloader, inner_lr, base_state_dict, reset_base_frequency, debug = False):
     paired_losses = []
     future_losses = []
     weight_list = []
     base_model.load_state_dict(base_state_dict)
     for i, batch in enumerate(val_dataloader):
+        if debug and i > 50:
+            break
         batch = {k: v.to(base_model.device) for k, v in batch.items()}
         paired_outer_loss, future_outer_loss, adapted_base_model, weights = compute_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = False)
         paired_losses.append(paired_outer_loss.item())
@@ -60,22 +73,7 @@ def validate(base_model, weight_model, val_dataloader, inner_lr, base_state_dict
             'max_weight': cat_weights.max(), 
             'min_weight': cat_weights.min()}
 
-def plot_sample_weights(weight_model, batch, tokenizer, save_dir = None, log_to_wandb = False):
-    with torch.no_grad():
-        weights = weight_model(batch['adaptation_toks'], batch['adaptation_attn_mask'])
-    sample_weights = []
-    for i in range(len(batch['adaptation_toks'])):
-        text = [tokenizer.decode(t) for t in batch['adaptation_toks'][i]][:sum(batch['adaptation_attn_mask'][i])]
-        w = weights[i].detach().cpu().numpy()[:sum(batch['adaptation_attn_mask'][i])]
-        sample_weights.append(create_colored_text(text, w))
-    if save_dir is not None:
-        os.makedirs(save_dir, exist_ok = True)
-        for i, image in enumerate(sample_weights):
-            image.save(os.path.join(save_dir, f'weights_{i}.png'))
-    if log_to_wandb:
-        for i, image in enumerate(sample_weights):
-            
-            wandb.log({f'sample_weights_{i}': wandb.Image(image)})
+
 #%%
 @hydra.main(config_path='configs', config_name='metatrain_config')
 def run(args):
@@ -88,7 +86,7 @@ def run(args):
     base_model = get_base_model(args.base_model, args.base_model_state_dict).to(device)
     base_state_dict = {k:v.detach().clone().cpu() for k, v in base_model.state_dict().items()}
     
-    weight_model = CaMeLS(args.weight_model_base, args.weight_model_freeze_base).to(device)
+    weight_model = CaMeLS(args.weight_model_base, args.weight_model_freeze_base, nl=args.weight_model_nl).to(device)
     optimizer = torch.optim.Adam(list(weight_model.parameters()), lr=args.outer_lr)
     
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, cache_dir = CACHE_DIR)
@@ -119,6 +117,10 @@ def run(args):
     while epoch < args.num_epochs:
         if step % 100 == 0:
             print(f'Epoch {epoch}, Step {step}')
+            
+        if args.debug: 
+            print(' --- Before step: ', step, '----')
+            debug_memory() 
         try:
             batch = next(train_iter)
         except:
@@ -126,9 +128,13 @@ def run(args):
             batch = next(train_iter)
             epoch += 1
         batch = {k: v.to(device) for k, v in batch.items()}
-        paired_outer_loss, future_outer_loss, adapted_base_model, _ = compute_outer_loss(base_model, weight_model, batch, args.inner_lr)
+        paired_outer_loss, future_outer_loss, adapted_base_model, _ = compute_outer_loss(base_model, weight_model, batch, args.inner_lr, debug = args.debug)
         
         total_outer_loss = paired_outer_loss*(1 - args.future_loss_weight) + future_outer_loss*args.future_loss_weight
+        
+        if args.debug: 
+            print(' Post outer loss computation: ', step)
+            debug_memory() 
         
         accumulated_total_losses.append(total_outer_loss.item())
         accumulated_paired_losses.append(paired_outer_loss.item())
@@ -136,6 +142,10 @@ def run(args):
         
         total_outer_loss = total_outer_loss / args.gradient_accumulation_steps
         total_outer_loss.backward()
+        
+        if args.debug: 
+            print(' Post outer loss backwards: ', step)
+            debug_memory() 
         
         #step the weight_model every gradient_accumulation_steps batches
         if (step+1) % args.gradient_accumulation_steps == 0:
@@ -151,24 +161,29 @@ def run(args):
             accumulated_paired_losses = []
             accumulated_future_losses = []
             
-            
+        if args.debug: 
+            print(' Post Optimizer Step: ')
+            debug_memory()
         #we either reset the base_model or load the post adaptation state_dict
         if (step+1) % args.reset_base_frequency == 0:
             base_model.load_state_dict(base_state_dict)
         else:
             base_model.load_state_dict(adapted_base_model.state_dict())
         del adapted_base_model
-        
+        if args.debug: 
+            print(' Base Model State Update: ')
+            debug_memory()
         #validation
         if (step+1) % (args.validation_frequency*args.gradient_accumulation_steps) == 0:
             weight_model.eval()
-            val_stats = validate(base_model, weight_model, val_dataloader, args.inner_lr, base_state_dict, args.reset_base_frequency)
+            val_stats = validate(base_model, weight_model, val_dataloader, args.inner_lr, base_state_dict, args.reset_base_frequency, debug = args.debug)
             weight_model.train()
-            val_loss = val_stats['loss']
+            val_stats['total_loss'] = val_stats['paired_loss']*(1 - args.future_loss_weight) + val_stats['future_loss']*args.future_loss_weight
+            val_loss = val_stats['total_loss']
             wandb.log({'val': val_stats})
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                torch.save(weight_model.state_dict(), f'{hydra.run.dir}/best_model.pt')
+                torch.save(weight_model.state_dict(), f'./best_model.pt')
                 print('Saved model')
             
             plot_sample_weights(weight_model, sample_weight_batch, tokenizer, log_to_wandb = True)
