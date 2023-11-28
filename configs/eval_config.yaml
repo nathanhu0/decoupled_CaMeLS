@@ -1,5 +1,6 @@
 defaults:
   - dataset: archivalqa
+  - loss_weighting: ??? #one of ['init', 'uniform', 'CaMeLS', 'salient_spans']
 
 seed: 7
 downsample_to: -1 #if -1, we use the full dataset. Otherwise, we downsample to this number of documents
@@ -12,7 +13,6 @@ base_model_state_dict: null
 r: 4 #rank for LORA
 lora_model_path: ???
 
-loss_weighting: ??? #one of ['init', 'uniform', 'CaMeLS', 'salient_spans']
 
 data_split: test #one of ['test', 'val']
 
@@ -27,5 +27,8 @@ hydra:
   job:
     chdir: true
   run:  
-    dir: outputs/eval/${dataset.name}-${data_split}/${base_model}/${loss_weighting}/lr:${lr}_seed:${seed}_${notes}_time:${now:%Y-%m-%d}_${now:%H:%M:%S}
+    dir: outputs/eval/${dataset.name}-${data_split}/${base_model}/${loss_weighting.name}_${notes}/lr:${lr}_seed:${seed}_time:${now:%Y-%m-%d}_${now:%H:%M:%S}
+  sweep:
+    dir: outputs/eval/${dataset.name}-${data_split}/${base_model}/${loss_weighting.name}_${notes}
+    subdir: lr:${lr}_seed:${seed}_time:${now:%Y-%m-%d}_${now:%H:%M:%S}
   

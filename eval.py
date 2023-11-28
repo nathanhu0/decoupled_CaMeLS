@@ -123,6 +123,7 @@ generation_defaults = {'diversity_penalty': 10.,
 @hydra.main(config_path='configs', config_name='eval_config')
 def run(args):
     set_seed(args.seed)
+    args.lr=float(args.lr)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print('loading model...')
     base_model = get_base_model(args.base_model, to_absolute_path(args.base_model_state_dict) if args.base_model_state_dict else None)
@@ -131,16 +132,18 @@ def run(args):
     base_model.to(device)
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, cache_dir = CACHE_DIR)
     tokenizer.pad_token_id = tokenizer.eos_token_id
-    if args.loss_weighting == 'salient_spans':
+    if args.loss_weighting.name == 'salient_spans':
         loss_weighting = SalientSpanWeighting(tokenizer=tokenizer)
-    elif args.loss_weighting == 'uniform':
+    elif args.loss_weighting.name == 'uniform':
         loss_weighting = UniformWeighting()
-    # elif args.loss_weighting == 'CaMeLS': #TODO integrate this smoothly with configs
-    #     loss_weighting = CaMeLS(args.base_model)
-    elif args.loss_weighting == 'init':
+    elif args.loss_weighting.name in ['CaMeLS', 'CaMeLS_sp']: #TODO integrate this smoothly with configs
+        loss_weighting = CaMeLS(pretrained_model=args.loss_weighting.pretrained_base, nl = args.loss_weighting.nl)
+        loss_weighting.load_state_dict(torch.load(to_absolute_path(args.loss_weighting.weight_model_path)))
+        loss_weighting.to(device)
+    elif args.loss_weighting.name == 'init':
         loss_weighting = None
     else:
-        raise ValueError(f'Invalid adaptation weighting {args.loss_weighting}')
+        raise ValueError(f'Invalid adaptation weighting {args.loss_weighting.name}')
     
     print('loading dataset...')
     assert args.data_split in ['val', 'test']
@@ -160,7 +163,7 @@ def run(args):
     evaluation_dataloader = torch.utils.data.DataLoader(evaluation_dataset, batch_size=1, shuffle=False, collate_fn=evaluation_dataset.collate_fn)
     
     wandb.init(project='un-camels', entity='nathu', job_type='evaluation', config=args)
-    if args.loss_weighting != 'init':
+    if args.loss_weighting.name != 'init':
         print('adapting base model...')
         base_model.train()
         set_lora_state(base_model, False)
@@ -169,12 +172,14 @@ def run(args):
     print('evaluating final model...')
     base_model.eval()
     set_lora_state(base_model, True)
-    qa_nll = evaluate_qa_nll(base_model, evaluation_dataset)
-    max_f1, avg_f1 = evaluate_qa_f1(base_model, tokenizer, evaluation_dataset, './final_generation_outputs.csv', k_generations=args.k_generations, max_answer_len=args.max_answer_len, **generation_defaults)
+    max_f1, avg_f1 = evaluate_qa_f1(base_model, tokenizer, evaluation_dataloader, './final_generation_outputs.csv', k_generations=args.k_generations, max_answer_len=args.max_answer_len, **generation_defaults)
+    qa_nll = evaluate_qa_nll(base_model, evaluation_dataloader)
     wandb.log({'qa_nll': qa_nll, 'max_f1': max_f1, 'avg_f1': avg_f1})
     print(f'QA NLL: {qa_nll}, Max F1: {max_f1}, Avg F1: {avg_f1}')
     with open('./final_qa_metrics.json', 'w') as f:
         json.dump({'qa_nll': qa_nll, 'max_f1': max_f1, 'avg_f1': avg_f1}, f)
+    wandb.finish()
+    
     
 if __name__ == '__main__':
     run()
