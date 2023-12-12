@@ -10,7 +10,7 @@ import wandb
 import os
 import higher 
 import numpy as np
-from lora import add_lora, set_lora_state, load_lora, get_lora_parameters
+from lora import add_lora, set_lora_state, load_lora, get_lora_parameters, get_non_lora_parameters
 
 def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = True, debug = False, inner_lora = False, learn_inner_lr = False):
     #inner_lora: if true, we use the lora model to compute the inner loss. If false, we use the base model
@@ -18,7 +18,7 @@ def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = Tru
     if debug: 
         print(' Pre inner loop: ')
         debug_memory()
-    optimizer = torch.optim.SGD(base_model.parameters(), lr=inner_lr)
+    optimizer = torch.optim.SGD(get_non_lora_parameters(base_model), lr=inner_lr)
     weights = weight_model(batch['adaptation_toks'], batch['adaptation_attn_mask'])
     if debug: 
         print(' Post Weight model fwd pass: ')
@@ -36,7 +36,7 @@ def adapt_base_model(base_model, weight_model, batch, inner_lr, outer_grad = Tru
     with higher.innerloop_ctx(base_model, optimizer, copy_initial_weights=True, track_higher_grads = outer_grad, override=overrides) as (f_base_lm, diffopt):
         for i in range(len(batch['adaptation_toks'])):
             
-            loss = weighted_lm_loss(f_base_lm, batch['adaptation_toks'][i:i+1], batch['adaptation_toks'][i:i+1], batch['adaptation_attn_mask'][i:i+1], weights[i:i+1])
+            loss = weighted_lm_loss(f_base_lm, batch['adaptation_toks'][i:i+1], batch['adaptation_labels'][i:i+1], batch['adaptation_attn_mask'][i:i+1], weights[i:i+1])
             
             inner_losses.append(loss.item())
             if debug: 
@@ -79,7 +79,9 @@ def validate(base_model, weight_model, val_dataloader, inner_lr, base_state_dict
     starting_state_dict = base_model.state_dict() #save the starting state dict so we can reset the model
     base_model.load_state_dict(base_state_dict)
     for i, batch in enumerate(val_dataloader):
-        batch = {k: v.to(base_model.device) for k, v in batch.items()}
+        batch = {k: v.to(base_model.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+        
+        
         outer_loss, inner_loss, adapted_base_model, weights = compute_lora_outer_loss(base_model, weight_model, batch, inner_lr, inner_lora=inner_lora, outer_grad = False)
         outer_losses.append(outer_loss.item())
         inner_losses.append(inner_loss)
@@ -126,11 +128,11 @@ def run(args):
         val_dataset = ArchivalQADataset(to_absolute_path(args.dataset.val_data_path), tokenizer = tokenizer, max_length = args.dataset.max_length, downsample_to=50 if args.debug else -1)
     else:
         raise NotImplementedError
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last = True)
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, drop_last = True)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, drop_last = True, collate_fn = train_dataset.collate_fn)
+    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, drop_last = True, collate_fn = val_dataset.collate_fn)
     train_iter = iter(train_dataloader)
     sample_weight_batch = next(iter(val_dataloader))
-    sample_weight_batch = {k: v.to(device) for k, v in sample_weight_batch.items()}
+    sample_weight_batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in sample_weight_batch.items()}
     step = 0
     epoch = 0
     best_val_loss = float('inf')
@@ -141,7 +143,7 @@ def run(args):
      
     print('Training...')
     while epoch < args.num_epochs:
-       
+        wandb.log({'epoch': epoch}, commit=False)
         if step % 100 == 0:
             print(f' --- Epoch {epoch}, Step {step} ---- ')
 
@@ -154,7 +156,7 @@ def run(args):
             train_iter = iter(train_dataloader)
             batch = next(train_iter)
             epoch += 1
-        batch = {k: v.to(device) for k, v in batch.items()}
+        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
         
         outer_loss, inner_loss, adapted_base_model, weights = compute_lora_outer_loss(base_model, weight_model, batch, inner_lr, outer_grad = True, inner_lora = args.inner_lora, debug = args.debug, learn_inner_lr = args.learn_inner_lr)
         
@@ -176,7 +178,10 @@ def run(args):
             debug_memory() 
         #step the optimizer every gradient_accumulation_steps
         if (step + 1) % args.gradient_accumulation_steps == 0:
-            grad_norm = torch.nn.utils.clip_grad_norm_(weight_model.parameters(), args.gradient_clip_threshold)  
+            grad_norm = torch.nn.utils.clip_grad_norm_(weight_model.parameters(), args.gradient_clip_threshold)
+            if args.learn_inner_lr:
+                inner_lr_grad_norm = torch.nn.utils.clip_grad_norm_([inner_lr], args.gradient_clip_threshold) 
+                wandb.log({'inner_lr_grad_norm': inner_lr_grad_norm}, commit=False)
             optimizer.step()
             optimizer.zero_grad()
             wandb.log({'train':{'outer_loss': np.mean(accumulated_outer_losses),

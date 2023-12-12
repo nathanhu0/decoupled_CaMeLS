@@ -1,0 +1,6 @@
+name: CaMeLS
+pretrained_base: distilgpt2
+freeze_base: false
+nl: sigmoid
+
+weight_model_path: ??? #path to the weight model

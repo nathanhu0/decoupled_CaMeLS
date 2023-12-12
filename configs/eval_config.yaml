@@ -13,7 +13,7 @@ base_model_state_dict: null
 r: 4 #rank for LORA
 lora_model_path: ???
 
-
+adapt_with_lora: false
 data_split: test #one of ['test', 'val']
 
 optimizer: adam
@@ -27,8 +27,8 @@ hydra:
   job:
     chdir: true
   run:  
-    dir: outputs/eval/${dataset.name}-${data_split}/${base_model}/${loss_weighting.name}_${notes}/lr:${lr}_seed:${seed}_time:${now:%Y-%m-%d}_${now:%H:%M:%S}
+    dir:  outputs/eval/${dataset.name}-${data_split}-${downsample_to}/${base_model}/${loss_weighting.name}_${notes}_fusedLora${adapt_with_lora}/lr:${lr}_seed:${seed}_time:${now:%Y-%m-%d}_${now:%H:%M:%S}
   sweep:
-    dir: outputs/eval/${dataset.name}-${data_split}/${base_model}/${loss_weighting.name}_${notes}
+    dir: outputs/eval/${dataset.name}-${data_split}-${downsample_to}/${base_model}/${loss_weighting.name}_${notes}_fusedLora${adapt_with_lora}
     subdir: lr:${lr}_seed:${seed}_time:${now:%Y-%m-%d}_${now:%H:%M:%S}
   

@@ -5,7 +5,7 @@ import hydra
 import wandb
 from tqdm import tqdm
 from util import CACHE_DIR, get_base_model
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, Adafactor
 from doc_datasets import NytDataset, ArchivalQADataset
 import torch
 from hydra.utils import to_absolute_path
@@ -55,7 +55,7 @@ def run(args):
     if args.optimizer == 'adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     elif args.optimizer == 'adafactor':
-        optimizer = torch.optim.Adafactor(model.parameters(), lr=args.lr)
+        optimizer = Adafactor(model.parameters(), lr=args.lr, scale_parameter=False, relative_step=False)
     else:
         raise ValueError(f'Invalid optimizer {args.optimizer}')
     

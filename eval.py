@@ -162,11 +162,11 @@ def run(args):
     adaptation_dataloader = torch.utils.data.DataLoader(adaptation_dataset, batch_size=1, shuffle=False, collate_fn=adaptation_dataset.collate_fn)
     evaluation_dataloader = torch.utils.data.DataLoader(evaluation_dataset, batch_size=1, shuffle=False, collate_fn=evaluation_dataset.collate_fn)
     
-    wandb.init(project='un-camels', entity='nathu', job_type='evaluation', config=args)
+    wandb.init(project='un-camels', entity='nathu', job_type='evaluation', config=args, settings=wandb.Settings(start_method='fork'))
     if args.loss_weighting.name != 'init':
         print('adapting base model...')
         base_model.train()
-        set_lora_state(base_model, False)
+        set_lora_state(base_model, args.adapt_with_lora)
         adapt_base_model(base_model, adaptation_dataloader, loss_weighting, args.lr, args.optimizer)
         
     print('evaluating final model...')
